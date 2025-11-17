@@ -3,11 +3,32 @@ import joblib, os, pandas as pd
 from feature_extractor import extract_url_features
 import plotly.express as px
 from datetime import datetime, timezone
-import whois
 import socket
 import ssl
 import tldextract
 import requests
+
+# --- WHOIS API function ---
+def get_whois_info(domain):
+    try:
+        api_key = "sQtu6yuc5cfrJN"  # Your JSONWHOIS API key
+        url = f"https://jsonwhoisapi.com/api/v1/whois?identifier={domain}"
+        headers = {"Authorization": f"Token token={api_key}"}
+        response = requests.get(url, headers=headers, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            creation_date = data.get('registry_data', {}).get('creation_date')
+            if creation_date:
+                creation_date = datetime.fromisoformat(creation_date).replace(tzinfo=timezone.utc)
+                domain_age_days = (datetime.now(timezone.utc) - creation_date).days
+            else:
+                domain_age_days = None
+            return data, domain_age_days
+        else:
+            return None, None
+    except Exception:
+        return None, None
+
 
 @st.cache_resource
 def load_model_and_vectorizer():
@@ -18,6 +39,7 @@ def load_model_and_vectorizer():
         model = joblib.load(model_path)
         return model, vec
     return None, None
+
 
 st.title('🔍 Analyzer')
 model, vec = load_model_and_vectorizer()
@@ -74,17 +96,12 @@ if st.button('Analyze URL'):
         # Domain extraction
         domain = tldextract.extract(url_input).registered_domain
 
-        # WHOIS & domain age
-        try:
-            domain_info = whois.whois(domain)
-            creation_date = domain_info.creation_date
-            if isinstance(creation_date, list):
-                creation_date = creation_date[0]
-            domain_age_days = (datetime.now(timezone.utc) - creation_date).days
+        # WHOIS & domain age via API
+        whois_data, domain_age_days = get_whois_info(domain)
+        if domain_age_days is not None:
             st.write(f"Domain age: {domain_age_days} days")
-        except Exception as e:
-            st.write(f"WHOIS info not available: {e}")
-            domain_age_days = None
+        else:
+            st.write("WHOIS info not available")
 
         # SSL certificate check
         try:
@@ -103,12 +120,11 @@ if st.button('Analyze URL'):
         try:
             ip_addr = socket.gethostbyname(domain)
             st.write(f"IP Address: {ip_addr}")
-            # Example simple IP info (use a proper API for full details)
-            st.write(f"Geolocation: Using free API recommended for live deployment")
+            st.write("Geolocation: Use a free IP API for full details")
         except Exception as e:
             st.write(f"IP resolution failed: {e}")
 
-        # URL reputation check example (PhishTank API or placeholder)
+        # URL reputation check placeholder
         try:
             response = requests.get(f"https://checkurl.phishtank.com/checkurl/?url={url_input}")
             if response.status_code == 200:
