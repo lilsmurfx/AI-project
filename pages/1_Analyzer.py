@@ -88,16 +88,7 @@ st.title("🔍 Analyzer — AI Threat Intelligence")
 
 model, vec = load_model_and_vectorizer()
 if model is None or vec is None:
-    st.error("❌ ML model or vectorizer missing. Please upload `phishing_model.pkl` and `vectorizer.pkl`.")
-    uploaded_model = st.file_uploader("Upload phishing_model.pkl", type="pkl")
-    uploaded_vec = st.file_uploader("Upload vectorizer.pkl", type="pkl")
-    if uploaded_model and uploaded_vec:
-        os.makedirs(os.path.join(BASE_DIR, "model"), exist_ok=True)
-        with open(os.path.join(BASE_DIR, "model/phishing_model.pkl"), "wb") as f:
-            f.write(uploaded_model.getbuffer())
-        with open(os.path.join(BASE_DIR, "model/vectorizer.pkl"), "wb") as f:
-            f.write(uploaded_vec.getbuffer())
-        st.success("✅ Files uploaded! Reload the page.")
+    st.error("❌ ML model or vectorizer missing in `model/` folder. Please add `phishing_model.pkl` and `vectorizer.pkl`.")
     st.stop()
 
 url_input = st.text_input("Enter website URL")
