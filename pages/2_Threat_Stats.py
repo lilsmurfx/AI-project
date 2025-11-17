@@ -3,16 +3,13 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 from datetime import datetime, timezone
+from streamlit_autorefresh import st_autorefresh
 
 # -----------------------------
 # AUTO-REFRESH EVERY 5 SECONDS
 # -----------------------------
-st_autorefresh = st.experimental_data_editor  # For caching purposes, we can also do:
-count = st.experimental_get_query_params().get("refresh_count", [0])[0]
-
-st_autorefresh = st.experimental_rerun
-st_autorefresh_interval = 5  # seconds
-st.experimental_set_query_params(refresh_count=int(count)+1)
+# This returns the number of times the page has refreshed
+count = st_autorefresh(interval=5 * 1000, limit=None, key="threatstats_autorefresh")
 
 # -----------------------------
 # BASE DIR + LOG FILE (absolute)
