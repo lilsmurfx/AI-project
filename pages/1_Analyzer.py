@@ -2,7 +2,7 @@ import streamlit as st
 import joblib, os, pandas as pd
 from feature_extractor import extract_url_features
 import plotly.express as px
-from datetime import datetime
+from datetime import datetime, timezone  # <- use timezone-aware datetime
 
 @st.cache_resource
 def load_model_and_vectorizer():
@@ -34,7 +34,12 @@ if st.button('Analyze URL'):
 
         os.makedirs('logs', exist_ok=True)
         log_path = 'logs/scans.csv'
-        df_log = pd.DataFrame([{'timestamp': datetime.utcnow().isoformat(), 'url': url_input, 'label': pred, 'score': prob}])
+        df_log = pd.DataFrame([{
+            'timestamp': datetime.now(timezone.utc).isoformat(),  # <- fixed
+            'url': url_input,
+            'label': pred,
+            'score': prob
+        }])
         if os.path.exists(log_path):
             df_log.to_csv(log_path, mode='a', header=False, index=False)
         else:
@@ -51,4 +56,4 @@ if st.button('Analyze URL'):
         st.dataframe(df)
 
         fig = px.pie(names=['Risk','Confidence'], values=[prob, 1-prob], hole=0.6)
-        st.plotly_chart(fig, width='stretch')  # if it was True
+        st.plotly_chart(fig, width='stretch')  # already fixed
