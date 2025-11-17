@@ -8,42 +8,50 @@ from PIL import Image
 from io import BytesIO
 
 # =====================================================
-#                 CONFIG (Safe Defaults)
+#         ABSOLUTE + SAFE LOGGING CONFIG (FIX)
 # =====================================================
-JSONWHOIS_API_KEY = "sQtu6yuc5cfrJN"     # Replace with env var in production
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+LOG_DIR = os.path.join(BASE_DIR, "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
+
+LOG_FILE = os.path.join(LOG_DIR, "scans.csv")   # <-- unified, absolute, safe
+
+
+def safe_append_to_csv(path, df):
+    """Append row safely with header-fix."""
+    file_exists = os.path.exists(path)
+    df.to_csv(path, mode="a", index=False, header=not file_exists)
+
+
+# =====================================================
+#                 CONFIG (API KEYS)
+# =====================================================
+
+JSONWHOIS_API_KEY = "sQtu6yuc5cfrJN"
 IPINFO_TOKEN = None
 GSB_API_KEY = None
 PHISHTANK_API = "https://checkurl.phishtank.com/checkurl/"
 SCREENSHOT_API = "https://api.screenshotapi.net/screenshot?token=YOUR_API_KEY&url={}"
 
 # =====================================================
-#                   SAFE HELPERS
+#                SAFE NETWORK HELPERS
 # =====================================================
 
 def safe_request(url, method="GET", timeout=5, **kwargs):
-    """Safe HTTP request wrapper to prevent crashes."""
     try:
-        if method == "POST":
-            r = requests.post(url, timeout=timeout, **kwargs)
-        else:
-            r = requests.get(url, timeout=timeout, **kwargs)
-
-        if r.status_code == 200:
-            return r
+        r = requests.post(url, timeout=timeout, **kwargs) if method == "POST" else requests.get(url, timeout=timeout, **kwargs)
+        return r if r.status_code == 200 else None
     except:
         return None
-    return None
 
-
-def get_whois_info(domain: str):
-    """Fetch WHOIS with JSONWHOIS + fallback for .ke."""
+def get_whois_info(domain):
     try:
         url = f"https://jsonwhoisapi.com/api/v1/whois?identifier={domain}"
         headers = {"Authorization": f"Token token={JSONWHOIS_API_KEY}"}
         r = safe_request(url, headers=headers)
         if r:
             data = r.json()
-
             creation = (
                 data.get("registry_data", {}).get("creation_date") or
                 data.get("created_at")
@@ -51,8 +59,8 @@ def get_whois_info(domain: str):
 
             if creation:
                 try:
-                    creation_date = datetime.fromisoformat(creation).replace(tzinfo=timezone.utc)
-                    age = (datetime.now(timezone.utc) - creation_date).days
+                    cdate = datetime.fromisoformat(creation).replace(tzinfo=timezone.utc)
+                    age = (datetime.now(timezone.utc) - cdate).days
                 except:
                     age = None
             else:
@@ -62,7 +70,6 @@ def get_whois_info(domain: str):
     except:
         pass
 
-    # Fallback for Kenya domains
     if domain.endswith(".ke") or domain.endswith(".co.ke"):
         return {"registrar": "KeNIC (fallback)"}, None
 
@@ -70,7 +77,6 @@ def get_whois_info(domain: str):
 
 
 def get_ip_info(domain):
-    """Get IP + geolocation (safe)."""
     url = f"https://ipinfo.io/{domain}/json"
     if IPINFO_TOKEN:
         url += f"?token={IPINFO_TOKEN}"
@@ -79,15 +85,11 @@ def get_ip_info(domain):
 
 
 def check_url_phishtank(url):
-    """PhishTank placeholder check with safe fallback."""
     r = safe_request(f"{PHISHTANK_API}?url={url}")
-    if r:
-        return "✅ Safe (PhishTank placeholder)"
-    return "⚠️ Possibly malicious (PhishTank)"
+    return "✅ Safe (PhishTank placeholder)" if r else "⚠️ Possibly malicious (PhishTank)"
 
 
 def check_url_gsb(url):
-    """Google Safe Browsing placeholder (safe)."""
     if not GSB_API_KEY:
         return "GSB not configured"
 
@@ -106,14 +108,10 @@ def check_url_gsb(url):
         method="POST",
         json=body
     )
-
-    if r and r.json().get("matches"):
-        return "⚠️ Malicious (Google Safe Browsing)"
-    return "✅ Safe (Google Safe Browsing)"
+    return "⚠️ Malicious (Google Safe Browsing)" if (r and r.json().get("matches")) else "✅ Safe (Google Safe Browsing)"
 
 
 def check_ssl(domain):
-    """Check SSL certificate validity."""
     try:
         ctx = ssl.create_default_context()
         with ctx.wrap_socket(socket.socket(), server_hostname=domain) as s:
@@ -126,7 +124,6 @@ def check_ssl(domain):
 
 
 def get_screenshot(url):
-    """Return screenshot image safely."""
     r = safe_request(SCREENSHOT_API.format(url), timeout=10)
     if not r:
         return None
@@ -136,12 +133,15 @@ def get_screenshot(url):
         return None
 
 
+# =====================================================
+#                 LOAD ML MODEL
+# =====================================================
+
 @st.cache_resource
 def load_model_and_vectorizer():
-    """Load ML model safely with fallbacks."""
     try:
-        model = joblib.load("model/phishing_model.pkl")
-        vec = joblib.load("model/vectorizer.pkl")
+        model = joblib.load(os.path.join(BASE_DIR, "model/phishing_model.pkl"))
+        vec = joblib.load(os.path.join(BASE_DIR, "model/vectorizer.pkl"))
         return model, vec
     except:
         return None, None
@@ -150,93 +150,77 @@ def load_model_and_vectorizer():
 # =====================================================
 #                 STREAMLIT UI
 # =====================================================
+
 st.title("🔍 Analyzer — AI Threat Intelligence")
 
 model, vec = load_model_and_vectorizer()
 if model is None:
-    st.error("❌ Model not found. Upload model/phishing_model.pkl + vectorizer.pkl.")
+    st.error("❌ Model missing — Upload model/phishing_model.pkl + vectorizer.pkl")
     st.stop()
 
-url_input = st.text_input("Enter a website URL to analyze", "")
+url_input = st.text_input("Enter a website URL", "")
 
 # =====================================================
-#                ANALYZE URL BUTTON
+#                 ANALYZE URL
 # =====================================================
+
 if st.button("Analyze URL") and url_input:
 
-    # URL sanity check
     if "://" not in url_input:
         url_input = "http://" + url_input
 
-    # =====================================================
-    #                  ML Prediction
-    # =====================================================
-    try:
-        feats = extract_url_features(url_input)
-        X = vec.transform([feats])
-        pred = int(model.predict(X)[0])
-        prob = float(max(model.predict_proba(X)[0]))
-    except Exception as e:
-        st.error("❌ Feature extraction or model prediction failed.")
-        st.stop()
-
-    label = "Safe" if pred == 0 else "High-Risk"
-    color = "success" if pred == 0 else "error"
+    # ML prediction
+    feats = extract_url_features(url_input)
+    X = vec.transform([feats])
+    pred = int(model.predict(X)[0])
+    prob = float(max(model.predict_proba(X)[0]))
 
     st.subheader("ML Prediction")
-    st.write(f"**Prediction:** {label}")
+    st.write("**Prediction:**", "Safe" if pred == 0 else "High-Risk")
     st.write(f"**Confidence:** {prob:.2f}")
 
     # =====================================================
-    #                 Log the Scan
+    #               FIXED LOGGING (ABSOLUTE PATH)
     # =====================================================
-    os.makedirs("logs", exist_ok=True)
-    row = pd.DataFrame([{
+
+    log_row = pd.DataFrame([{
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "url": url_input,
         "label": pred,
         "score": prob
     }])
 
-    log_file = "logs/scans.csv"
-    if os.path.exists(log_file):
-        row.to_csv(log_file, mode="a", header=False, index=False)
-    else:
-        row.to_csv(log_file, index=False)
+    safe_append_to_csv(LOG_FILE, log_row)   # <-- FIX HERE
+
 
     # =====================================================
-    #                 Feature Breakdown
+    #               FEATURE BREAKDOWN
     # =====================================================
-    st.subheader("Feature Breakdown")
+
     df = pd.DataFrame([feats]).T.reset_index()
     df.columns = ["Feature", "Value"]
     st.dataframe(df)
 
-    # Pie chart
     fig = px.pie(
         names=["Risk Probability", "Safe Probability"],
-        values=[prob, 1 - prob],
-        hole=0.5,
+        values=[prob, 1 - prob], hole=0.5
     )
     st.plotly_chart(fig, use_container_width=True)
 
     # =====================================================
-    #            REAL-TIME THREAT INTELLIGENCE
+    #          REAL-TIME THREAT INTELLIGENCE
     # =====================================================
-    st.subheader("🔎 Real-Time Threat Intelligence")
 
+    st.subheader("🔎 Real-Time Threat Intelligence")
     domain = tldextract.extract(url_input).registered_domain
 
-    # WHOIS
     whois_data, domain_age = get_whois_info(domain)
     st.write("**WHOIS:**", whois_data or "Unavailable")
     if domain_age:
         st.write(f"**Domain Age:** {domain_age} days")
 
-    # SSL
-    st.write("**SSL Certificate:**", check_ssl(domain))
+    st.write("**SSL:**", check_ssl(domain))
 
-    # IP + GEO
     ip_info = get_ip_info(domain)
     if ip_info:
         st.write(f"**IP:** {ip_info.get('ip')}")
@@ -244,36 +228,31 @@ if st.button("Analyze URL") and url_input:
     else:
         st.write("IP / Geolocation unavailable")
 
-    # Reputation
     st.write("**PhishTank:**", check_url_phishtank(url_input))
     st.write("**Google Safe Browsing:**", check_url_gsb(url_input))
 
-    # =====================================================
-    #                SCREENSHOT
-    # =====================================================
     img = get_screenshot(url_input)
     if img:
         st.subheader("Website Screenshot")
         st.image(img, use_container_width=True)
 
     # =====================================================
-    #           Composite Risk Scoring System
+    #               RISK SCORE
     # =====================================================
-    score = 0
-    score += 2 if pred == 1 else 0
-    score += 1 if (domain_age and domain_age < 180) else 0
-    score += 2 if "Safe" not in check_url_phishtank(url_input) else 0
-    score += 2 if "Safe" not in check_url_gsb(url_input) else 0
-    score += 1 if "Valid" not in check_ssl(domain) else 0
 
-    risk_levels = {
+    score = (
+        (2 if pred == 1 else 0) +
+        (1 if domain_age and domain_age < 180 else 0) +
+        (2 if "Safe" not in check_url_phishtank(url_input) else 0) +
+        (2 if "Safe" not in check_url_gsb(url_input) else 0) +
+        (1 if "Valid" not in check_ssl(domain) else 0)
+    )
+
+    labels = {
         0: "Low", 1: "Low",
         2: "Medium", 3: "Medium",
         4: "High", 5: "High",
         6: "Critical", 7: "Critical", 8: "Critical"
     }
 
-    final_score = min(score, 8)
-
-    st.metric("Final Composite Risk Level", f"{risk_levels[final_score]} ({final_score}/8)")
-
+    st.metric("Final Composite Risk Level", f"{labels[min(score,8)]} ({min(score,8)}/8)")
