@@ -22,4 +22,4 @@ else:
     agg = logs['label'].value_counts().rename_axis('label').reset_index(name='Count')
     agg['label'] = agg['label'].map({0:'Safe',1:'Malicious'})
     fig = px.pie(agg, names='label', values='Count', title='Detected Threats Overview')
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, width='stretch')  # if it was True
