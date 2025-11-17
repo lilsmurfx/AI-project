@@ -51,4 +51,4 @@ if st.button('Analyze URL'):
         st.dataframe(df)
 
         fig = px.pie(names=['Risk','Confidence'], values=[prob, 1-prob], hole=0.6)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')  # if it was True
