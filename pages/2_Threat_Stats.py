@@ -1,37 +1,75 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from datetime import datetime, timezone  # <- for UTC timestamps
+from datetime import datetime, timezone
 
 st.title('📊 Threat Stats')
 
-# Load logs safely
+# -----------------------------
+# SAFE LOG LOADING
+# -----------------------------
 try:
     logs = pd.read_csv('logs/scans.csv')
+
+    # Ensure required columns exist
+    required_cols = {'timestamp', 'url', 'label', 'score'}
+    if not required_cols.issubset(logs.columns):
+        raise ValueError("Malformed logs file")
+
 except Exception:
     logs = pd.DataFrame({'timestamp': [], 'url': [], 'label': [], 'score': []})
 
-# Recent scans table
+# -----------------------------
+# SAFE TIMESTAMP PARSING
+# -----------------------------
+if not logs.empty:
+    logs['timestamp'] = pd.to_datetime(
+        logs['timestamp'],
+        utc=True,
+        errors='coerce'       # <-- prevents crashes
+    )
+    logs = logs.dropna(subset=['timestamp'])  # <-- remove bad rows safely
+
+
+# -----------------------------
+# RECENT SCANS TABLE
+# -----------------------------
 st.subheader('Recent scans')
 if logs.empty:
-    st.info('No scans yet. Use the Analyzer to run a URL check.')
+    st.info('No scans yet. Run a scan in the Analyzer.')
 else:
-    # Convert timestamps to UTC-aware datetime for display
-    logs['timestamp'] = pd.to_datetime(logs['timestamp'], utc=True)
-    st.dataframe(logs.sort_values('timestamp', ascending=False).head(50))
+    st.dataframe(
+        logs.sort_values('timestamp', ascending=False).head(50)
+    )
 
-# Sample distribution pie chart
+
+# -----------------------------
+# CHART: SAMPLE DISTRIBUTION
+# -----------------------------
 st.subheader('Sample distribution')
+
 if logs.empty:
-    sample = pd.DataFrame({'Category': ['Safe','Suspicious','Malicious'], 'Count':[120,35,22]})
-    fig = px.pie(sample, names='Category', values='Count', title='Detected Threats Overview')
+    # fallback dummy data
+    sample = pd.DataFrame({
+        'Category': ['Safe', 'Suspicious', 'Malicious'],
+        'Count': [120, 35, 22]
+    })
+    fig = px.pie(sample, names='Category', values='Count',
+                 title='Detected Threats Overview')
+
 else:
+    # Count labels safely
     agg = logs['label'].value_counts().rename_axis('label').reset_index(name='Count')
-    agg['label'] = agg['label'].map({0:'Safe',1:'Malicious'})
-    fig = px.pie(agg, names='label', values='Count', title='Detected Threats Overview')
+    agg['label'] = agg['label'].map({0: 'Safe', 1: 'Malicious'}).fillna('Unknown')
 
-# Display chart with updated syntax
-st.plotly_chart(fig, width='stretch')  # <- replaced use_container_width=True
+    fig = px.pie(agg, names='label', values='Count',
+                 title='Detected Threats Overview')
 
-# Optional: last update timestamp
+# Plot chart
+st.plotly_chart(fig, width='stretch')
+
+
+# -----------------------------
+# TIMESTAMP
+# -----------------------------
 st.caption(f"Data last updated at {datetime.now(timezone.utc).isoformat()}")
