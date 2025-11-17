@@ -7,25 +7,25 @@ import tldextract
 import requests
 import socket
 import ssl
-import json
+from PIL import Image
+from io import BytesIO
 
 # --------------------------
 # --- CONFIGURATION
 # --------------------------
 JSONWHOIS_API_KEY = "sQtu6yuc5cfrJN"
-IPINFO_TOKEN = "YOUR_IPINFO_TOKEN"  # optional
-GSB_API_KEY = "YOUR_GOOGLE_SAFEBROWSING_API_KEY"
+IPINFO_TOKEN = None  # Optional: add token for ipinfo.io
+GSB_API_KEY = None   # Optional: Google Safe Browsing API key
 PHISHTANK_API = "https://checkurl.phishtank.com/checkurl/"
-SSL_LABS_API = "https://api.ssllabs.com/api/v3/analyze?host={}"
+SCREENSHOT_API = "https://api.screenshotapi.net/screenshot?token=YOUR_API_KEY&url={}"
 
 # --------------------------
 # --- UTILITY FUNCTIONS
 # --------------------------
 
 def get_whois_info(domain):
-    """JSONWHOIS + fallback for .co.ke"""
+    """JSONWHOIS + fallback for .ke/.co.ke"""
     try:
-        # Use JSONWHOIS for generic domains
         url = f"https://jsonwhoisapi.com/api/v1/whois?identifier={domain}"
         headers = {"Authorization": f"Token token={JSONWHOIS_API_KEY}"}
         r = requests.get(url, headers=headers, timeout=5)
@@ -38,17 +38,20 @@ def get_whois_info(domain):
             else:
                 domain_age_days = None
             return data, domain_age_days
-        return None, None
     except:
-        # Fallback for .co.ke using KeNIC (placeholder, implement real API if available)
-        if domain.endswith(".co.ke"):
-            return {"registrar": "KeNIC"}, None
-        return None, None
+        pass
+    # Fallback for .co.ke / .ke
+    if domain.endswith(".ke") or domain.endswith(".co.ke"):
+        return {"registrar": "KeNIC (fallback)"}, None
+    return None, None
 
 def get_ip_info(domain):
     """Get IP and geolocation using free API"""
     try:
-        r = requests.get(f"https://ipinfo.io/{domain}/json?token={IPINFO_TOKEN}", timeout=5)
+        url = f"https://ipinfo.io/{domain}/json"
+        if IPINFO_TOKEN:
+            url += f"?token={IPINFO_TOKEN}"
+        r = requests.get(url, timeout=5)
         return r.json()
     except:
         return None
@@ -64,16 +67,18 @@ def check_url_phishtank(url):
         return "PhishTank check failed"
 
 def check_url_gsb(url):
-    """Google Safe Browsing API"""
+    """Google Safe Browsing API placeholder"""
+    if not GSB_API_KEY:
+        return "GSB check not configured"
     try:
         gsb_url = f"https://safebrowsing.googleapis.com/v4/threatMatches:find?key={GSB_API_KEY}"
         payload = {
             "client": {"clientId": "govsec-ai", "clientVersion": "1.0"},
             "threatInfo": {
-                "threatTypes": ["MALWARE", "SOCIAL_ENGINEERING", "UNWANTED_SOFTWARE"],
+                "threatTypes": ["MALWARE","SOCIAL_ENGINEERING","UNWANTED_SOFTWARE"],
                 "platformTypes": ["ANY_PLATFORM"],
                 "threatEntryTypes": ["URL"],
-                "threatEntries": [{"url": url}]
+                "threatEntries":[{"url":url}]
             }
         }
         r = requests.post(gsb_url, json=payload, timeout=5)
@@ -85,19 +90,25 @@ def check_url_gsb(url):
         return "GSB check failed"
 
 def check_ssl(domain):
-    """Check SSL via SSL Labs API"""
+    """Check SSL validity via socket"""
     try:
-        r = requests.get(SSL_LABS_API.format(domain), timeout=5)
-        data = r.json()
-        status = data.get("status")
-        if status == "READY":
-            endpoints = data.get("endpoints", [])
-            if endpoints:
-                grade = endpoints[0].get("grade")
-                return f"✅ Valid (Grade {grade})"
-        return "⚠️ SSL Invalid / Not Ready"
+        ctx = ssl.create_default_context()
+        with ctx.wrap_socket(socket.socket(), server_hostname=domain) as s:
+            s.settimeout(3.0)
+            s.connect((domain, 443))
+            cert = s.getpeercert()
+        return "✅ Valid"
     except:
-        return "SSL check failed"
+        return "⚠️ Invalid or not found"
+
+def get_screenshot(url):
+    """Fetch screenshot from ScreenshotAPI (Cloud-compatible)"""
+    try:
+        r = requests.get(SCREENSHOT_API.format(url), timeout=10)
+        img = Image.open(BytesIO(r.content))
+        return img
+    except:
+        return None
 
 @st.cache_resource
 def load_model_and_vectorizer():
@@ -112,7 +123,6 @@ def load_model_and_vectorizer():
 # --------------------------
 # --- STREAMLIT UI
 # --------------------------
-
 st.title('🔍 Analyzer')
 model, vec = load_model_and_vectorizer()
 
@@ -144,31 +154,27 @@ if st.button('Analyze URL') and url_input:
     else:
         df_log.to_csv(log_path, index=False)
 
-    # --- Risk Display ---
+    # --- ML Results ---
     st.subheader('ML Prediction')
-    if pred == 1:
-        st.error(f"⚠️ High Risk (Confidence {prob:.2f})")
-    else:
-        st.success(f"✅ Safe (Confidence {prob:.2f})")
+    st.success(f"✅ Safe (Confidence {prob:.2f})" if pred==0 else f"⚠️ High Risk (Confidence {prob:.2f})")
 
-    # --- Feature Breakdown ---
     st.subheader('Feature Breakdown')
     df = pd.DataFrame([feats]).T.reset_index()
-    df.columns = ['feature', 'value']
+    df.columns = ['feature','value']
     st.dataframe(df)
 
     # --- ML Pie Chart ---
     fig = px.pie(names=['Risk','Confidence'], values=[prob, 1-prob], hole=0.6)
     st.plotly_chart(fig, width='stretch')
 
-    # --- Real-time Enhancements ---
+    # --- Real-time URL Analysis ---
     st.subheader('🔎 Real-time URL Analysis')
     domain = tldextract.extract(url_input).registered_domain
 
-    # WHOIS & domain age
-    whois_data, domain_age_days = get_whois_info(domain)
+    # WHOIS
+    whois_data, domain_age = get_whois_info(domain)
     st.write("WHOIS info:", whois_data if whois_data else "Unavailable")
-    if domain_age_days: st.write(f"Domain age: {domain_age_days} days")
+    if domain_age: st.write(f"Domain age: {domain_age} days")
 
     # SSL
     ssl_status = check_ssl(domain)
@@ -183,18 +189,22 @@ if st.button('Analyze URL') and url_input:
         st.write("IP / geolocation info unavailable")
 
     # URL Reputation
-    phishtank_status = check_url_phishtank(url_input)
-    gsb_status = check_url_gsb(url_input)
-    st.write(f"PhishTank: {phishtank_status}")
-    st.write(f"Google Safe Browsing: {gsb_status}")
+    st.write("URL Reputation:")
+    st.write(f"PhishTank: {check_url_phishtank(url_input)}")
+    st.write(f"Google Safe Browsing: {check_url_gsb(url_input)}")
+
+    # --- Screenshot preview ---
+    img = get_screenshot(url_input)
+    if img:
+        st.subheader("Website Screenshot")
+        st.image(img, use_column_width=True)
 
     # --- Composite Risk Score ---
-    score_components = []
-    if pred == 1: score_components.append(2)
-    if domain_age_days is not None and domain_age_days < 180: score_components.append(1)
-    if "Safe" not in phishtank_status: score_components.append(2)
-    if "Safe" not in gsb_status: score_components.append(2)
-    if "Valid" not in ssl_status: score_components.append(1)
-    composite_risk = min(sum(score_components), 8)
-    risk_labels = {0:'Low',1:'Low',2:'Medium',3:'Medium',4:'High',5:'High',6:'Critical',7:'Critical',8:'Critical'}
-    st.metric("Composite Risk Score", f"{risk_labels[composite_risk]} ({composite_risk}/8)")
+    score = 0
+    if pred==1: score+=2
+    if domain_age and domain_age<180: score+=1
+    if "Safe" not in check_url_phishtank(url_input): score+=2
+    if "Safe" not in check_url_gsb(url_input): score+=2
+    if "Valid" not in ssl_status: score+=1
+    composite_labels={0:'Low',1:'Low',2:'Medium',3:'Medium',4:'High',5:'High',6:'Critical',7:'Critical',8:'Critical'}
+    st.metric("Composite Risk Score", f"{composite_labels[min(score,8)]} ({min(score,8)}/8)")
