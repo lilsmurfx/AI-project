@@ -3,13 +3,6 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 from datetime import datetime, timezone
-from streamlit_autorefresh import st_autorefresh
-
-# ==================================================
-# AUTO-REFRESH SETTINGS
-# ==================================================
-# Refresh every 5 seconds to pick up new Analyzer scans
-st_autorefresh(interval=5 * 1000, limit=None, key="threatstats_autorefresh")
 
 # ==================================================
 # BASE DIR + LOG FILE
@@ -19,7 +12,7 @@ LOG_DIR = os.path.join(BASE_DIR, "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
 LOG_FILE = os.path.join(LOG_DIR, "scans.csv")
 
-st.title("📊 Threat Stats — Auto-Refreshing")
+st.title("📊 Threat Stats")
 
 # ==================================================
 # LOAD LOGS SAFELY
