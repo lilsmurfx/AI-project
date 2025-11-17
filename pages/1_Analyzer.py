@@ -40,7 +40,7 @@ def safe_request(url, method="GET", timeout=5, **kwargs):
 def get_whois_info(domain):
     try:
         url = f"https://jsonwhoisapi.com/api/v1/whois?identifier={domain}"
-        headers = {"Authorization": f"Token token=sQtu6yuc5cfrJN"}
+        headers = {"Authorization": f"Token token=sQtu6yuc5cfrJNWDBkUJrA"}
         r = safe_request(url, headers=headers)
         if r:
             data = r.json()
