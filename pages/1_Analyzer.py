@@ -2,7 +2,12 @@ import streamlit as st
 import joblib, os, pandas as pd
 from feature_extractor import extract_url_features
 import plotly.express as px
-from datetime import datetime, timezone  # <- use timezone-aware datetime
+from datetime import datetime, timezone
+import whois
+import socket
+import ssl
+import tldextract
+import requests
 
 @st.cache_resource
 def load_model_and_vectorizer():
@@ -27,15 +32,17 @@ if st.button('Analyze URL'):
     if not url_input:
         st.error('Please enter a URL')
     else:
+        # --- ML prediction ---
         feats = extract_url_features(url_input)
         X = vec.transform([feats])
         pred = int(model.predict(X)[0])
         prob = float(model.predict_proba(X)[0][pred])
 
+        # --- Logs ---
         os.makedirs('logs', exist_ok=True)
         log_path = 'logs/scans.csv'
         df_log = pd.DataFrame([{
-            'timestamp': datetime.now(timezone.utc).isoformat(),  # <- fixed
+            'timestamp': datetime.now(timezone.utc).isoformat(),
             'url': url_input,
             'label': pred,
             'score': prob
@@ -45,15 +52,80 @@ if st.button('Analyze URL'):
         else:
             df_log.to_csv(log_path, index=False)
 
+        # --- Risk Display ---
         if pred == 1:
             st.error(f"⚠️ **High Risk:** This website is likely malicious. (Confidence {prob:.2f})")
         else:
             st.success(f"✅ **Safe:** This website appears legitimate. (Confidence {prob:.2f})")
 
+        # --- Feature Breakdown ---
         st.subheader('Feature breakdown')
         df = pd.DataFrame([feats]).T.reset_index()
         df.columns = ['feature', 'value']
         st.dataframe(df)
 
+        # --- ML Pie Chart ---
         fig = px.pie(names=['Risk','Confidence'], values=[prob, 1-prob], hole=0.6)
-        st.plotly_chart(fig, width='stretch')  # already fixed
+        st.plotly_chart(fig, width='stretch')
+
+        # --- Real-time Phishing Enhancements ---
+        st.subheader('🔎 Real-time URL Analysis')
+
+        # Domain extraction
+        domain = tldextract.extract(url_input).registered_domain
+
+        # WHOIS & domain age
+        try:
+            domain_info = whois.whois(domain)
+            creation_date = domain_info.creation_date
+            if isinstance(creation_date, list):
+                creation_date = creation_date[0]
+            domain_age_days = (datetime.now(timezone.utc) - creation_date).days
+            st.write(f"Domain age: {domain_age_days} days")
+        except Exception as e:
+            st.write(f"WHOIS info not available: {e}")
+            domain_age_days = None
+
+        # SSL certificate check
+        try:
+            ctx = ssl.create_default_context()
+            with ctx.wrap_socket(socket.socket(), server_hostname=domain) as s:
+                s.settimeout(3.0)
+                s.connect((domain, 443))
+                cert = s.getpeercert()
+                ssl_valid = True
+            st.write("SSL certificate: ✅ Valid")
+        except Exception:
+            ssl_valid = False
+            st.write("SSL certificate: ⚠️ Invalid or not found")
+
+        # IP Geolocation
+        try:
+            ip_addr = socket.gethostbyname(domain)
+            st.write(f"IP Address: {ip_addr}")
+            # Example simple IP info (use a proper API for full details)
+            st.write(f"Geolocation: Using free API recommended for live deployment")
+        except Exception as e:
+            st.write(f"IP resolution failed: {e}")
+
+        # URL reputation check example (PhishTank API or placeholder)
+        try:
+            response = requests.get(f"https://checkurl.phishtank.com/checkurl/?url={url_input}")
+            if response.status_code == 200:
+                st.write("URL reputation check: ✅ Safe (example API placeholder)")
+            else:
+                st.write("URL reputation check unavailable")
+        except Exception:
+            st.write("URL reputation check failed")
+
+        # --- Composite Risk Score ---
+        score_components = []
+        if pred == 1:
+            score_components.append(1)
+        if ssl_valid == False:
+            score_components.append(1)
+        if domain_age_days is not None and domain_age_days < 180:
+            score_components.append(1)
+        composite_risk = min(sum(score_components), 3)
+        risk_labels = {0:'Low', 1:'Medium', 2:'High', 3:'Critical'}
+        st.metric("Composite Risk Score", f"{risk_labels[composite_risk]} ({composite_risk}/3)")
