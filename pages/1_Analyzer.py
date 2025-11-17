@@ -22,7 +22,9 @@ SCREENSHOT_API = "https://api.screenshotapi.net/screenshot?token=YOUR_API_KEY&ur
 # --------------------------
 # --- UTILITY FUNCTIONS
 # --------------------------
+
 def get_whois_info(domain):
+    """JSONWHOIS + fallback for .ke/.co.ke"""
     try:
         url = f"https://jsonwhoisapi.com/api/v1/whois?identifier={domain}"
         headers = {"Authorization": f"Token token={JSONWHOIS_API_KEY}"}
@@ -38,11 +40,13 @@ def get_whois_info(domain):
             return data, domain_age_days
     except:
         pass
+    # Fallback for .co.ke / .ke
     if domain.endswith(".ke") or domain.endswith(".co.ke"):
         return {"registrar": "KeNIC (fallback)"}, None
     return None, None
 
 def get_ip_info(domain):
+    """Get IP and geolocation using free API"""
     try:
         url = f"https://ipinfo.io/{domain}/json"
         if IPINFO_TOKEN:
@@ -53,6 +57,7 @@ def get_ip_info(domain):
         return None
 
 def check_url_phishtank(url):
+    """PhishTank API placeholder"""
     try:
         r = requests.get(f"{PHISHTANK_API}?url={url}", timeout=5)
         if r.status_code == 200:
@@ -62,6 +67,7 @@ def check_url_phishtank(url):
         return "PhishTank check failed"
 
 def check_url_gsb(url):
+    """Google Safe Browsing API placeholder"""
     if not GSB_API_KEY:
         return "GSB check not configured"
     try:
@@ -84,6 +90,7 @@ def check_url_gsb(url):
         return "GSB check failed"
 
 def check_ssl(domain):
+    """Check SSL validity via socket"""
     try:
         ctx = ssl.create_default_context()
         with ctx.wrap_socket(socket.socket(), server_hostname=domain) as s:
@@ -92,9 +99,10 @@ def check_ssl(domain):
             cert = s.getpeercert()
         return "✅ Valid"
     except:
-        return "⚠️ Invalid / Not found"
+        return "⚠️ Invalid or not found"
 
 def get_screenshot(url):
+    """Fetch screenshot from ScreenshotAPI (Cloud-compatible)"""
     try:
         r = requests.get(SCREENSHOT_API.format(url), timeout=10)
         img = Image.open(BytesIO(r.content))
@@ -115,33 +123,9 @@ def load_model_and_vectorizer():
 # --------------------------
 # --- STREAMLIT UI
 # --------------------------
-# Page config
-st.set_page_config(
-    page_title="GovSec AI Analyzer 🇰🇪",
-    page_icon="🇰🇪",
-    layout="wide",
-)
-
-# Sidebar
-st.sidebar.title("🇰🇪 KE GovSec AI")
-st.sidebar.markdown(
-    """
-    **Navigation:**  
-    - Analyzer  
-    - Threat Stats  
-    - About
-    """
-)
-
-# Dark/light toggle
-theme = st.sidebar.radio("Theme:", ["Light","Dark"])
-if theme=="Dark":
-    st.markdown("<style>body{background-color:#0B3D91;color:white;}</style>", unsafe_allow_html=True)
-
-# Main Analyzer UI
-st.title("🔍 Phishing & Impersonation Analyzer")
-
+st.title('🔍 Analyzer')
 model, vec = load_model_and_vectorizer()
+
 if model is None:
     st.warning('Model files not found. Run `train_model.py` locally and push model/ files.')
     st.stop()
@@ -156,7 +140,7 @@ if st.button('Analyze URL') and url_input:
     pred = int(model.predict(X)[0])
     prob = float(model.predict_proba(X)[0][pred])
 
-    # Logs
+    # --- Logs ---
     os.makedirs('logs', exist_ok=True)
     log_path = 'logs/scans.csv'
     df_log = pd.DataFrame([{
@@ -170,49 +154,57 @@ if st.button('Analyze URL') and url_input:
     else:
         df_log.to_csv(log_path, index=False)
 
-    # --- Card Layout ---
-    st.subheader("🔐 ML Prediction")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Risk Level", "High Risk" if pred==1 else "Safe", f"{prob:.2f} confidence")
-    
-    # Feature breakdown
-    col2.dataframe(pd.DataFrame([feats]).T.reset_index().rename(columns={0:'value','index':'feature'}))
-    
-    # ML Pie Chart
+    # --- ML Results ---
+    st.subheader('ML Prediction')
+    st.success(f"✅ Safe (Confidence {prob:.2f})" if pred==0 else f"⚠️ High Risk (Confidence {prob:.2f})")
+
+    st.subheader('Feature Breakdown')
+    df = pd.DataFrame([feats]).T.reset_index()
+    df.columns = ['feature','value']
+    st.dataframe(df)
+
+    # --- ML Pie Chart ---
     fig = px.pie(names=['Risk','Confidence'], values=[prob, 1-prob], hole=0.6)
-    col3.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
-    # --- Real-time URL Analysis Cards ---
-    st.subheader("🔎 Real-time URL Analysis")
+    # --- Real-time URL Analysis ---
+    st.subheader('🔎 Real-time URL Analysis')
     domain = tldextract.extract(url_input).registered_domain
+
+    # WHOIS
     whois_data, domain_age = get_whois_info(domain)
+    st.write("WHOIS info:", whois_data if whois_data else "Unavailable")
+    if domain_age: st.write(f"Domain age: {domain_age} days")
+
+    # SSL
     ssl_status = check_ssl(domain)
+    st.write(f"SSL certificate: {ssl_status}")
+
+    # IP + Geolocation
     ip_info = get_ip_info(domain)
-    phishtank_status = check_url_phishtank(url_input)
-    gsb_status = check_url_gsb(url_input)
+    if ip_info:
+        st.write(f"IP Address: {ip_info.get('ip')}")
+        st.write(f"Location: {ip_info.get('city')}, {ip_info.get('region')}, {ip_info.get('country')}")
+    else:
+        st.write("IP / geolocation info unavailable")
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Domain Age (days)", domain_age if domain_age else "N/A")
-    col1.write("WHOIS:", whois_data if whois_data else "Unavailable")
-    col2.metric("SSL Certificate", ssl_status)
-    col2.metric("IP Address", ip_info.get('ip') if ip_info else "N/A")
-    col2.write("Location:", f"{ip_info.get('city')}, {ip_info.get('region')}, {ip_info.get('country')}" if ip_info else "N/A")
-    col3.metric("PhishTank", phishtank_status)
-    col3.metric("Google Safe Browsing", gsb_status)
+    # URL Reputation
+    st.write("URL Reputation:")
+    st.write(f"PhishTank: {check_url_phishtank(url_input)}")
+    st.write(f"Google Safe Browsing: {check_url_gsb(url_input)}")
 
-    # Screenshot preview
+    # --- Screenshot preview ---
     img = get_screenshot(url_input)
     if img:
-        st.subheader("🖼️ Website Screenshot")
+        st.subheader("Website Screenshot")
         st.image(img, use_column_width=True)
 
     # --- Composite Risk Score ---
     score = 0
     if pred==1: score+=2
     if domain_age and domain_age<180: score+=1
-    if "Safe" not in phishtank_status: score+=2
-    if "Safe" not in gsb_status: score+=2
+    if "Safe" not in check_url_phishtank(url_input): score+=2
+    if "Safe" not in check_url_gsb(url_input): score+=2
     if "Valid" not in ssl_status: score+=1
     composite_labels={0:'Low',1:'Low',2:'Medium',3:'Medium',4:'High',5:'High',6:'Critical',7:'Critical',8:'Critical'}
-    st.subheader("📊 Composite Risk Score")
-    st.metric("Score", f"{composite_labels[min(score,8)]} ({min(score,8)}/8)")
+    st.metric("Composite Risk Score", f"{composite_labels[min(score,8)]} ({min(score,8)}/8)")
