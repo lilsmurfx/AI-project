@@ -5,4 +5,4 @@ st.markdown('''
 This demo is designed for judges and evaluators — for production, integrate real datasets, threat feeds, and hardened deployment practices.
 ''')
 st.markdown('---')
-st.write('Developed for the AI for National Prosperity Challenge 2025.')
+st.write('Developed for the AI for National Prosperity Challenge 2025 by Levi Mwangi.')
